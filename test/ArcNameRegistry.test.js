@@ -5,7 +5,9 @@
  *
  * Covers: deployment, registration (valid/invalid/duplicate), price
  * enforcement (exact/under/over), reads (ownerOf/isAvailable/resolve,
- * getAllNames + pagination), transfer, metadata, admin controls and events.
+ * getAllNames + pagination), transfer, metadata, admin controls and events —
+ * plus the v2 resolver layer: text records, primary name and the namesOf
+ * reverse index.
  * Names use only a-z 0-9 (the frontend validation rules are mirrored onchain).
  */
 const { expect } = require('chai');
@@ -335,6 +337,198 @@ describe('ArcNameRegistry', function () {
       expect(await registry.ownerOf('alice')).to.equal(ZERO);
       await registry.register('alice');
       expect(await registry.ownerOf('alice')).to.not.equal(ZERO);
+    });
+
+    it('keeps v1 selectors and exposes the v2 resolver surface', async function () {
+      const { registry } = await deployRegistry(0n);
+      // v1 unchanged
+      expect(await registry.isAvailable('v2check')).to.equal(true);
+      await registry.register('v2check');
+      expect(await registry.ownerOf('v2check')).to.not.equal(ZERO);
+      // v2: text records + primary + reverse index all answer on ABI grounds
+      await registry.setText('v2check', 'avatar', 'https://x/y.png');
+      expect(await registry.text('v2check', 'avatar')).to.equal('https://x/y.png');
+      expect(await registry.text('v2check', 'url')).to.equal('');
+      await registry.setPrimaryName('v2check');
+      expect(await registry.primaryName(registry.runner.address)).to.equal('v2check');
+      expect(await registry.namesOf(registry.runner.address)).to.deep.equal(['v2check']);
+    });
+  });
+
+  describe('text records (v2)', function () {
+    it('owner can set a text record and text() reads it back', async function () {
+      const { registry } = await deployRegistry(0n);
+      await registry.register('alice');
+      await expect(registry.setText('alice', 'avatar', 'https://cdn.arc/alice.png'))
+        .to.emit(registry, 'TextChanged')
+        .withArgs(idOf('alice'), 'alice', 'avatar', 'https://cdn.arc/alice.png');
+      expect(await registry.text('alice', 'avatar')).to.equal('https://cdn.arc/alice.png');
+      await registry.setText('alice', 'url', 'https://alice.example');
+      expect(await registry.text('alice', 'url')).to.equal('https://alice.example');
+    });
+
+    it('returns an empty string for unset keys and unknown names', async function () {
+      const { registry } = await deployRegistry(0n);
+      await registry.register('alice');
+      expect(await registry.text('alice', 'twitter')).to.equal('');
+      expect(await registry.text('ghost', 'avatar')).to.equal('');
+    });
+
+    it('only the owner can set a text record', async function () {
+      const { registry, alice } = await deployRegistry(0n);
+      await registry.register('alice');
+      await expect(registry.connect(alice).setText('alice', 'avatar', 'https://evil.example/x.png'))
+        .to.be.revertedWithCustomError(registry, 'NotOwner');
+    });
+
+    it('scopes records per name — same key on different names is independent', async function () {
+      const { registry, other } = await deployRegistry(0n);
+      await registry.register('alice');
+      await registry.connect(other).register('bob');
+      await registry.setText('alice', 'avatar', 'https://cdn.arc/alice.png');
+      await registry.connect(other).setText('bob', 'avatar', 'https://cdn.arc/bob.png');
+      expect(await registry.text('alice', 'avatar')).to.equal('https://cdn.arc/alice.png');
+      expect(await registry.text('bob', 'avatar')).to.equal('https://cdn.arc/bob.png');
+    });
+
+    it('an empty value clears a record and emits TextChanged', async function () {
+      const { registry } = await deployRegistry(0n);
+      await registry.register('alice');
+      await registry.setText('alice', 'description', 'hello arc');
+      expect(await registry.text('alice', 'description')).to.equal('hello arc');
+      await expect(registry.setText('alice', 'description', ''))
+        .to.emit(registry, 'TextChanged')
+        .withArgs(idOf('alice'), 'alice', 'description', '');
+      expect(await registry.text('alice', 'description')).to.equal('');
+    });
+
+    it('rejects an empty key', async function () {
+      const { registry } = await deployRegistry(0n);
+      await registry.register('alice');
+      await expect(registry.setText('alice', '', 'x'))
+        .to.be.revertedWithCustomError(registry, 'EmptyKey');
+    });
+  });
+
+  describe('primary name (v2)', function () {
+    it('owner can set a primary name and primaryName(address) reads it back', async function () {
+      const { registry, deployer } = await deployRegistry(0n);
+      await registry.register('alice');
+      await expect(registry.setPrimaryName('alice'))
+        .to.emit(registry, 'PrimaryNameSet')
+        .withArgs(deployer.address, '', 'alice');
+      expect(await registry.primaryName(deployer.address)).to.equal('alice');
+    });
+
+    it('primaryName returns empty for an address with no primary', async function () {
+      const { registry, deployer } = await deployRegistry(0n);
+      expect(await registry.primaryName(deployer.address)).to.equal('');
+    });
+
+    it('non-owner cannot set a primary name', async function () {
+      const { registry, other } = await deployRegistry(0n);
+      await registry.register('alice');
+      await expect(registry.connect(other).setPrimaryName('alice'))
+        .to.be.revertedWithCustomError(registry, 'NotOwner');
+    });
+
+    it('setting a new primary replaces the old one and emits the previous value', async function () {
+      const { registry, deployer } = await deployRegistry(0n);
+      await registry.register('alice');
+      await registry.register('bob');
+      await registry.setPrimaryName('alice');
+      await expect(registry.setPrimaryName('bob'))
+        .to.emit(registry, 'PrimaryNameSet')
+        .withArgs(deployer.address, 'alice', 'bob');
+      expect(await registry.primaryName(deployer.address)).to.equal('bob');
+    });
+
+    it('re-setting the same primary is a no-op (no duplicate event)', async function () {
+      const { registry } = await deployRegistry(0n);
+      await registry.register('alice');
+      await registry.setPrimaryName('alice');
+      await expect(registry.setPrimaryName('alice')).to.not.emit(registry, 'PrimaryNameSet');
+      expect(await registry.primaryName(await registry.runner.getAddress())).to.equal('alice');
+    });
+
+    it('transferring a primary name clears the sender primary', async function () {
+      const { registry, deployer, other } = await deployRegistry(0n);
+      await registry.register('alice');
+      await registry.setPrimaryName('alice');
+      await registry.transfer('alice', other.address);
+      expect(await registry.primaryName(deployer.address)).to.equal('');
+      // the recipient does not inherit the primary either
+      expect(await registry.primaryName(other.address)).to.equal('');
+    });
+
+    it('transferring a non-primary name leaves the primary intact', async function () {
+      const { registry, deployer, other } = await deployRegistry(0n);
+      await registry.register('alice');
+      await registry.register('bob');
+      await registry.setPrimaryName('bob');
+      await registry.transfer('alice', other.address);
+      expect(await registry.primaryName(deployer.address)).to.equal('bob');
+    });
+  });
+
+  describe('namesOf reverse index (v2)', function () {
+    it('lists names an owner registered, in acquisition order', async function () {
+      const { registry, deployer } = await deployRegistry(0n);
+      await registry.register('alice');
+      await registry.register('bob');
+      await registry.register('carol');
+      expect(await registry.namesOf(deployer.address)).to.deep.equal(['alice', 'bob', 'carol']);
+    });
+
+    it('returns an empty array for an address that owns nothing', async function () {
+      const { registry, other } = await deployRegistry(0n);
+      await registry.register('alice');
+      expect(await registry.namesOf(other.address)).to.deep.equal([]);
+    });
+
+    it('transfer moves the name between owners in the index', async function () {
+      const { registry, deployer, other } = await deployRegistry(0n);
+      await registry.register('alice');
+      await registry.register('bob');
+      await registry.transfer('alice', other.address);
+      expect(await registry.namesOf(deployer.address)).to.deep.equal(['bob']);
+      expect(await registry.namesOf(other.address)).to.deep.equal(['alice']);
+    });
+
+    it('receiving a transfer appends to the recipient list', async function () {
+      const { registry, deployer, other } = await deployRegistry(0n);
+      await registry.connect(other).register('zed');
+      await registry.register('alice');
+      await registry.transfer('alice', other.address);
+      expect(await registry.namesOf(other.address)).to.deep.equal(['zed', 'alice']);
+    });
+
+    it('transferring out of the middle keeps every remaining name', async function () {
+      const { registry, deployer, other } = await deployRegistry(0n);
+      await registry.register('aaa');
+      await registry.register('bbb');
+      await registry.register('ccc');
+      await registry.transfer('bbb', other.address);
+      const remaining = await registry.namesOf(deployer.address);
+      expect([...remaining].sort()).to.deep.equal(['aaa', 'ccc']);
+      expect(await registry.namesOf(other.address)).to.deep.equal(['bbb']);
+    });
+
+    it('self-transfer does not duplicate the name in the index', async function () {
+      const { registry, deployer } = await deployRegistry(0n);
+      await registry.register('solo');
+      await registry.transfer('solo', deployer.address);
+      expect(await registry.namesOf(deployer.address)).to.deep.equal(['solo']);
+    });
+
+    it('follows chained transfers to the final owner', async function () {
+      const { registry, deployer, alice, bob } = await deployRegistry(0n);
+      await registry.register('handoff');
+      await registry.transfer('handoff', alice.address);
+      await registry.connect(alice).transfer('handoff', bob.address);
+      expect(await registry.namesOf(deployer.address)).to.deep.equal([]);
+      expect(await registry.namesOf(alice.address)).to.deep.equal([]);
+      expect(await registry.namesOf(bob.address)).to.deep.equal(['handoff']);
     });
   });
 });
