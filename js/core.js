@@ -180,12 +180,170 @@
     isAvailable: '0x965306aa',     // isAvailable(string)
     ownerOf: '0x920ffa26',         // ownerOf(string)
     price: '0xa035b1fe',           // price()
-    totalNames: '0xa38cb6c1'       // totalNames()
+    totalNames: '0xa38cb6c1',      // totalNames()
+    // ── v2 · resolver layer ──
+    transfer: '0xfbf58b3e',        // transfer(string,address)
+    setText: '0x05378f4f',         // setText(string,string,string)
+    text: '0x0513c3e9',            // text(string,string)
+    setPrimaryName: '0xab66abd5',  // setPrimaryName(string)
+    primaryName: '0xeba951aa',     // primaryName(address)
+    namesOf: '0x84d2731c'          // namesOf(address)
   };
 
   function padBytes32(hex) {
     var s = stripHex(hex);
     return '0x' + s.padStart(64, '0');
+  }
+
+  /* ── v2 · ABI helpers (strings / addresses / string[] decoding) ── */
+
+  /** UTF-8 encode a string to an unpadded lowercase hex byte string. */
+  function utf8ToHex(str) {
+    var s = String(str == null ? '' : str);
+    var hex = '';
+    for (var i = 0; i < s.length; i++) {
+      var code = s.codePointAt(i);
+      if (code > 0xffff) i++; // surrogate pair already consumed
+      if (code < 0x80) hex += code.toString(16).padStart(2, '0');
+      else if (code < 0x800) {
+        hex += (0xc0 | (code >> 6)).toString(16).padStart(2, '0');
+        hex += (0x80 | (code & 0x3f)).toString(16).padStart(2, '0');
+      } else if (code < 0x10000) {
+        hex += (0xe0 | (code >> 12)).toString(16).padStart(2, '0');
+        hex += (0x80 | ((code >> 6) & 0x3f)).toString(16).padStart(2, '0');
+        hex += (0x80 | (code & 0x3f)).toString(16).padStart(2, '0');
+      } else {
+        hex += (0xf0 | (code >> 18)).toString(16).padStart(2, '0');
+        hex += (0x80 | ((code >> 12) & 0x3f)).toString(16).padStart(2, '0');
+        hex += (0x80 | ((code >> 6) & 0x3f)).toString(16).padStart(2, '0');
+        hex += (0x80 | (code & 0x3f)).toString(16).padStart(2, '0');
+      }
+    }
+    return hex;
+  }
+
+  /** Decode a hex byte string to UTF-8 text ("" for empty). */
+  function hexToUtf8(hex) {
+    var s = stripHex(hex);
+    if (s.length % 2 !== 0) s = s.slice(0, -1);
+    var bytes = [];
+    for (var i = 0; i < s.length; i += 2) bytes.push(parseInt(s.slice(i, i + 2), 16));
+    var out = '';
+    for (var j = 0; j < bytes.length; j++) {
+      var b = bytes[j];
+      if (b < 0x80) out += String.fromCharCode(b);
+      else if (b < 0xe0) out += String.fromCharCode(((b & 0x1f) << 6) | (bytes[++j] & 0x3f));
+      else if (b < 0xf0) {
+        out += String.fromCharCode(((b & 0x0f) << 12) | ((bytes[++j] & 0x3f) << 6) | (bytes[++j] & 0x3f));
+      } else {
+        var cp = ((b & 0x07) << 18) | ((bytes[++j] & 0x3f) << 12) | ((bytes[++j] & 0x3f) << 6) | (bytes[++j] & 0x3f);
+        out += String.fromCodePoint(cp);
+      }
+    }
+    return out;
+  }
+
+  /** Split a hex result into 32-byte words (array of 64-char hex, no 0x). */
+  function wordsOf(hexResult) {
+    var s = stripHex(hexResult || '');
+    if (s === '') return [];
+    s = s.padEnd(Math.ceil(s.length / 64) * 64, '0');
+    var out = [];
+    for (var i = 0; i < s.length; i += 64) out.push(s.slice(i, i + 64));
+    return out;
+  }
+
+  function wordInt(word) { // 64-hex word → BigInt
+    return BigInt('0x' + word);
+  }
+
+  /**
+   * Decode one ABI dynamic `string` from an eth_call result.
+   * Handles the standard [offset][len][data…] encoding; "" for empty.
+   */
+  function decodeString(hexResult) {
+    var w = wordsOf(hexResult);
+    if (!w.length) return '';
+    var dataStart = Number(wordInt(w[0])) / 32;
+    var len = Number(wordInt(w[dataStart] || '00'));
+    if (!len) return '';
+    var take = Math.ceil(len / 32);
+    var dataHex = w.slice(dataStart + 1, dataStart + 1 + take).join('').slice(0, len * 2);
+    return hexToUtf8(dataHex);
+  }
+
+  /**
+   * Decode an ABI dynamic `string[]` from an eth_call result.
+   * Returns [] for empty payloads.
+   */
+  function decodeStringArray(hexResult) {
+    var w = wordsOf(hexResult);
+    if (!w.length) return [];
+    var arrStart = Number(wordInt(w[0])) / 32;          // word of the length
+    var len = Number(wordInt(w[arrStart] || '00'));
+    if (!len) return [];
+    var base = arrStart + 1;                            // first element-offset word
+    var out = [];
+    for (var i = 0; i < len; i++) {
+      var rel = Number(wordInt(w[base + i] || '00')) / 32; // offset relative to base
+      var el = base + rel;                                 // word of the element length
+      var elen = Number(wordInt(w[el] || '00'));
+      if (!elen) { out.push(''); continue; }
+      var take = Math.ceil(elen / 32);
+      var dataHex = w.slice(el + 1, el + 1 + take).join('').slice(0, elen * 2);
+      out.push(hexToUtf8(dataHex));
+    }
+    return out;
+  }
+
+  /** ABI-encode a dynamic string arg's [len][data] region (no offset head). */
+  function stringDataHex(str) {
+    var data = utf8ToHex(str);
+    var byteLen = data.length / 2;
+    return byteLen.toString(16).padStart(64, '0') + data.padEnd(Math.ceil(byteLen / 32) * 64, '0');
+  }
+
+  /** ABI-encode an address as one 32-byte word. */
+  function addressWordHex(addr) {
+    var a = String(addr || '').replace(/^0x/i, '');
+    return a.toLowerCase().padStart(64, '0');
+  }
+
+  /**
+   * Minimal multi-arg ABI encoder for the registry's v2 surface.
+   * parts: [{ type: 'string'|'address', value }] — offsets are computed per
+   * the canonical head/data layout. Returns hex WITHOUT a selector.
+   */
+  function encodeArgs(parts) {
+    var n = parts.length;
+    var head = new Array(n);
+    var dataChunks = [];
+    var cum = 0; // bytes of dynamic data so far
+    for (var i = 0; i < n; i++) {
+      if (parts[i].type === 'string') {
+        head[i] = (n * 32 + cum).toString(16).padStart(64, '0');
+        var d = stringDataHex(parts[i].value == null ? '' : parts[i].value);
+        dataChunks.push(d);
+        cum += d.length / 2;
+      }
+    }
+    var out = '';
+    for (var j = 0; j < n; j++) {
+      var p = parts[j];
+      if (p.type === 'address') out += addressWordHex(p.value);
+      else out += head[j];
+    }
+    return out + dataChunks.join('');
+  }
+
+  /** Selector + encoded args → full calldata. */
+  function callDataArgs(selector, parts) {
+    return selector + encodeArgs(parts);
+  }
+
+  /** Selector + one address argument (primaryName / namesOf). */
+  function callDataAddress(selector, addr) {
+    return selector + addressWordHex(addr);
   }
 
   /**
@@ -269,6 +427,16 @@
     decodeAddress: decodeAddress,
     decodeUintBig: decodeUintBig,
     isZeroAddress: isZeroAddress,
+    // v2 · resolver helpers
+    utf8ToHex: utf8ToHex,
+    hexToUtf8: hexToUtf8,
+    stringDataHex: stringDataHex,
+    addressWordHex: addressWordHex,
+    encodeArgs: encodeArgs,
+    callDataArgs: callDataArgs,
+    callDataAddress: callDataAddress,
+    decodeString: decodeString,
+    decodeStringArray: decodeStringArray,
     sleep: sleep,
     truncateMiddle: truncateMiddle
   };

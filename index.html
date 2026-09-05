@@ -116,8 +116,9 @@
       <nav class="nav-links" aria-label="Primary">
         <a href="#why">Why ArcName</a>
         <a href="#network">Network</a>
-        <a href="#wallet">Wallet</a>
+        <a href="#resolve">Resolve</a>
         <a href="#register">Register</a>
+        <a href="#mynames">My names</a>
         <a href="#faq">FAQ</a>
       </nav>
 
@@ -138,8 +139,9 @@
     <div class="nav-mobile" id="navMobile">
       <a href="#why">Why ArcName</a>
       <a href="#network">Network</a>
-      <a href="#wallet">Wallet</a>
+      <a href="#resolve">Resolve</a>
       <a href="#register">Register</a>
+      <a href="#mynames">My names</a>
       <a href="#faq">FAQ</a>
     </div>
   </header>
@@ -653,6 +655,218 @@
       </div>
     </section>
 
+    <!-- ═══════════════ Resolver ═══════════════ -->
+    <section id="resolve">
+      <div class="container">
+        <div class="section-head" data-reveal>
+          <div class="eyebrow">Resolver</div>
+          <h2>Resolve a name — or <span class="grad-text">reverse-look</span> an address</h2>
+          <p>Type <b>alice</b> to resolve it to its owner and onchain text records, or paste any <b>0x address</b> to see its primary name and the portfolio it owns. Every answer is a live read of the Arc ledger — no cache, no simulation.</p>
+        </div>
+
+        <div class="glass reg-console" data-reveal>
+          <div class="console-head">
+            <div class="console-title">
+              <div class="why-icon" style="width:44px;height:44px;margin:0">
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="m21 21-4.3-4.3"/><path d="M8.5 11h5M11 8.5v5"/></svg>
+              </div>
+              <div>
+                <h3>Name resolver</h3>
+                <p id="resolveConsoleSub">ArcName Registry · name → owner &amp; records</p>
+              </div>
+            </div>
+            <span class="console-badge" id="resolveBadge"><span class="dot dot--off" id="resolveDot"></span><span id="resolveBadgeText">Registry offline</span></span>
+          </div>
+
+          <!-- deploy gate (registryAddress empty in js/config.js) -->
+          <div class="panel gate show" id="resolveGate">
+            <div class="gate-top">
+              <div class="gate-icon">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="16 18 22 12 16 6"/><polyline points="8 6 2 12 8 18"/></svg>
+              </div>
+              <div style="flex:1;min-width:0">
+                <h4>Resolver not deployed yet</h4>
+                <p>
+                  Names resolve through the same onchain contract as registration — <code>ArcNameRegistry.sol</code> — and none is deployed on Arc
+                  testnet yet. Until a registry address is set in the app config, lookups stay disabled here rather than pretending. Telemetry,
+                  wallet and profile structure keep working.
+                </p>
+                <div class="gate-steps" style="grid-template-columns:repeat(3,1fr)">
+                  <div class="gate-step"><span class="n">1</span><b>Deploy the registry</b>Follow <a class="link" href="DEPLOY.md">DEPLOY.md</a> — compile <code>ArcNameRegistry.sol</code> and deploy on <b>Arc Testnet</b>.</div>
+                  <div class="gate-step"><span class="n">2</span><b>Copy the address</b>Grab the deployed contract address (0x…).</div>
+                  <div class="gate-step"><span class="n">3</span><b>Configure the app</b>Paste it into <code>REGISTRY_ADDRESS</code> in <code>js/config.js</code>, then refresh. Resolver + My Names light up.</div>
+                </div>
+                <div class="gate-actions">
+                  <a class="btn btn-primary btn-sm" href="DEPLOY.md">Open DEPLOY.md
+                    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6M15 3h6v6M10 14 21 3"/></svg>
+                  </a>
+                  <a class="btn btn-ghost btn-sm" href="contracts/ArcNameRegistry.sol" target="_blank" rel="noopener noreferrer">View contract source</a>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- search -->
+          <form id="resolveForm" novalidate style="margin-top:20px">
+            <div class="reg-search">
+              <div class="field-wrap">
+                <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="#5f6b8c" stroke-width="2" stroke-linecap="round" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="m21 21-4.3-4.3"/></svg>
+                <input class="field mono" id="resolveInput" placeholder="alice or 0x…" maxlength="66"
+                       autocapitalize="off" autocomplete="off" spellcheck="false" aria-label="Name or address to resolve" />
+                <button class="btn btn-soft" type="submit" id="resolveSubmitBtn">Resolve</button>
+              </div>
+            </div>
+            <div class="hint" id="resolveHint">A name (alice) or a wallet address (0x…) — resolved straight from the Arc ledger.</div>
+          </form>
+
+          <!-- results -->
+          <div id="resolvePanels">
+            <div class="panel" id="resolveLoading">
+              <div class="res-name"><span class="sk" style="width:180px">placeholder</span></div>
+              <div class="res-meta"><span class="sk" style="width:240px">reading the ledger</span></div>
+            </div>
+
+            <!-- name lookup result -->
+            <div class="panel" id="resolveNameView">
+              <div class="res-name" style="align-items:center">
+                <span class="mono" id="rsName">name.arc</span>
+                <span class="res-badge ok" id="rsPrimaryBadge" hidden>Primary name</span>
+                <button class="icon-btn" id="rsNameCopy" type="button" aria-label="Copy name" title="Copy name">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect width="14" height="14" x="8" y="8" rx="2"/><path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2"/></svg>
+                </button>
+              </div>
+              <div class="res-owner" id="rsOwnerRow">
+                <span class="muted" style="font-size:13px">owner · resolves to</span>
+                <span class="mono" id="rsOwner">0x…</span>
+                <button class="icon-btn" id="rsOwnerCopy" type="button" aria-label="Copy owner address" title="Copy address">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect width="14" height="14" x="8" y="8" rx="2"/><path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2"/></svg>
+                </button>
+                <a class="link" id="rsOwnerLink" href="#" target="_blank" rel="noopener noreferrer">view on ArcScan</a>
+                <span class="spacer" style="flex:1"></span>
+                <a class="link" id="rsProfileLink" href="#" rel="noopener noreferrer" hidden>open profile page →</a>
+              </div>
+
+              <div class="rec-list" id="rsRecords"></div>
+              <div class="res-meta muted" id="rsNoRecords" hidden>No text records — the owner hasn't set any yet.</div>
+
+              <div id="rsRegisterCta" hidden style="margin-top:18px">
+                <button class="btn btn-primary btn-lg" id="rsRegisterBtn" style="min-width:220px">Register name.arc</button>
+                <span class="hint" style="margin:14px 0 0">This name is free onchain — claim it before someone else does.</span>
+              </div>
+            </div>
+
+            <!-- address lookup result -->
+            <div class="panel" id="resolveAddrView">
+              <div class="res-name" style="align-items:center">
+                <span class="mono" id="rsAddr">0x…</span>
+                <button class="icon-btn" id="rsAddrCopy" type="button" aria-label="Copy address" title="Copy address">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect width="14" height="14" x="8" y="8" rx="2"/><path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2"/></svg>
+                </button>
+                <span class="chip" style="font-size:11.5px" id="rsAddrPrimaryChip"><span class="dot dot--live"></span> primary: <b id="rsAddrPrimary" class="mono">none</b></span>
+              </div>
+              <div class="res-meta" style="margin-top:14px">Names owned by this address (<b id="rsNamesCount">0</b>)</div>
+              <div class="rec-list" id="rsNamesList"></div>
+              <div class="res-meta muted" id="rsNamesEmpty" hidden>No names owned by this address — it has no ArcName identity yet.</div>
+              <div class="hint" id="rsAddrHint" style="margin-top:10px"></div>
+            </div>
+
+            <div class="panel" id="resolveError">
+              <div class="error-box show" style="margin-top:0" role="alert" id="resolveErrorMsg"></div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ═══════════════ My Names ═══════════════ -->
+    <section id="mynames">
+      <div class="container">
+        <div class="section-head" data-reveal>
+          <div class="eyebrow">My names</div>
+          <h2>Your <span class="grad-text">portfolio</span>, owned onchain</h2>
+          <p>Connect your wallet to see every name you own, set your primary handle, transfer names and edit the text records that make up your onchain profile. Writes go straight through the registry — one wallet confirmation at a time.</p>
+        </div>
+
+        <div class="glass reg-console" data-reveal>
+          <div class="console-head">
+            <div class="console-title">
+              <div class="why-icon" style="width:44px;height:44px;margin:0">
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 7 12 3 4 7v10l8 4 8-4Z"/><path d="M4 7l8 4 8-4"/><path d="M12 11v10"/></svg>
+              </div>
+              <div>
+                <h3>My names</h3>
+                <p id="mynamesSub">Your portfolio — read from <code>namesOf(your wallet)</code></p>
+              </div>
+            </div>
+            <span class="console-badge" id="mynamesBadge"><span class="dot dot--off" id="mynamesDot"></span><span id="mynamesBadgeText">Wallet disconnected</span></span>
+          </div>
+
+          <!-- connect prompt -->
+          <div class="panel show" id="mynamesConnect">
+            <div class="res-name" style="font-size:18px">Your names live in your wallet.</div>
+            <div class="res-meta">Connect an EIP-1193 wallet on Arc Testnet to load <code>namesOf(you)</code> and manage each name — set a primary, transfer, edit records.</div>
+            <div style="display:flex;gap:10px;flex-wrap:wrap;margin-top:8px">
+              <button class="btn btn-primary" id="mynamesConnectBtn">Connect wallet</button>
+              <button class="btn btn-ghost" id="mynamesGoWallet" type="button">Open wallet panel</button>
+            </div>
+            <p class="muted" style="font-size:13px;margin:14px 0 0">No wallet? You can still resolve any name or address in the Resolver above.</p>
+          </div>
+
+          <!-- deploy gate (registryAddress empty) -->
+          <div class="panel gate" id="mynamesGate">
+            <div class="gate-top">
+              <div class="gate-icon">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="16 18 22 12 16 6"/><polyline points="8 6 2 12 8 18"/></svg>
+              </div>
+              <div style="flex:1;min-width:0">
+                <h4>Registry not deployed yet</h4>
+                <p>
+                  The dashboard lists names through <code>namesOf(address)</code> on <code>ArcNameRegistry.sol</code>. No registry is configured on
+                  Arc testnet yet, so this panel stays honest: nothing to list, nothing faked. Deploy the contract and set
+                  <code>REGISTRY_ADDRESS</code> in <code>js/config.js</code> to activate it.
+                </p>
+                <div class="gate-actions">
+                  <a class="btn btn-primary btn-sm" href="DEPLOY.md">Open DEPLOY.md
+                    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6M15 3h6v6M10 14 21 3"/></svg>
+                  </a>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- live dashboard -->
+          <div id="mynamesLive" hidden>
+            <div class="reg-livebar" style="margin-top:0">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#34d399" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 6 9 17l-5-5"/></svg>
+              <span>you own <b class="mono" id="mnCount">–</b> name(s)</span>
+              <span>primary <b class="mono" id="mnPrimaryName">none</b></span>
+              <span class="spacer"></span>
+              <button class="btn btn-ghost btn-sm" id="mnRefreshBtn">
+                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 12a9 9 0 1 1-2.64-6.36M21 3v6h-6"/></svg>
+                Refresh
+              </button>
+            </div>
+
+            <div class="mn-list" id="mnList"></div>
+
+            <div class="panel" id="mnEmpty" hidden>
+              <div class="res-name" style="font-size:18px">Nothing here yet.</div>
+              <div class="res-meta">This wallet doesn't own any ArcName yet. Names are one transaction away — free ones don't wait.</div>
+              <button class="btn btn-primary" id="mnRegisterCta" type="button">Register your first name</button>
+            </div>
+
+            <div class="hint" id="mnStatus" role="status"></div>
+
+            <!-- my-names session log (real transactions) -->
+            <div id="mnSessWrap" hidden>
+              <div class="sess-title"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 8v4l3 3"/><circle cx="12" cy="12" r="9"/></svg> This session · real transactions</div>
+              <div class="sess-list" id="mnSessionList"></div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
     <!-- ═══════════════ How it works ═══════════════ -->
     <section id="how">
       <div class="container">
@@ -756,8 +970,9 @@
           <h5>Product</h5>
           <a href="#why">Why ArcName</a>
           <a href="#network">Live network</a>
-          <a href="#wallet">Wallet</a>
+          <a href="#resolve">Resolve a name</a>
           <a href="#register">Register a name</a>
+          <a href="#mynames">My names</a>
           <a href="DEPLOY.md">DEPLOY.md</a>
         </div>
         <div class="footer-col">

@@ -186,6 +186,9 @@
     var p = provider();
     var w = state.wallet;
 
+    // My Names dashboard mirrors the wallet + registry state
+    renderMyNames();
+
     // nav button
     if (w.address) {
       setText('connectBtnLabel', C.shortAddress(w.address));
@@ -398,6 +401,25 @@
       if ($('regAddr')) { $('regAddr').textContent = REG_ADDR.slice(0, 8) + '…' + REG_ADDR.slice(-6); $('regAddr').title = REG_ADDR; }
       loadRegistryMeta();
     }
+
+    // Resolver console mirrors the same deploy gate
+    var rGate = $('resolveGate');
+    var rBadge = $('resolveBadge');
+    var rBadgeTxt = $('resolveBadgeText');
+    var rDot = $('resolveDot');
+    if (rGate) rGate.classList.toggle('show', !live);
+    if (!live) {
+      if (rBadge) rBadge.classList.remove('live');
+      if (rBadgeTxt) rBadgeTxt.textContent = 'Needs deployment';
+      if (rDot) setLiveDot(rDot, false);
+    } else {
+      if (rBadge) rBadge.classList.add('live');
+      if (rBadgeTxt) rBadgeTxt.textContent = 'Registry live';
+      if (rDot) setLiveDot(rDot, true);
+    }
+
+    // My Names dashboard state (wallet + registry gating)
+    renderMyNames();
   }
 
   function loadRegistryMeta() {
@@ -860,6 +882,680 @@
   function startStats() {
     tickStats();
     setInterval(function () { tickStats(); }, STATS_CFG.refreshMs || 15000);
+  }
+
+  /* ═══════════════════════════════════════════════════════════════════
+     3.6 · RESOLVER — name → owner + text records · address → reverse
+     ═══════════════════════════════════════════════════════════════════ */
+
+  var TEXT_RECORD_KEYS = ['avatar', 'url', 'twitter', 'description'];
+  var TEXT_RECORD_LABELS = { avatar: 'Avatar', url: 'Website', twitter: 'Twitter', description: 'About' };
+  var resolveCtx = { name: null, address: null };
+
+  function esc(s) {
+    return String(s == null ? '' : s).replace(/[&<>"']/g, function (c) {
+      return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c];
+    });
+  }
+
+  function parseResolveInput(raw) {
+    var s = String(raw || '').trim();
+    if (/^0x[0-9a-fA-F]{40}$/.test(s)) return { kind: 'address', value: s.toLowerCase() };
+    var v = C.validateName(s);
+    if (v.ok) return { kind: 'name', value: v.name };
+    return { kind: 'invalid', value: s };
+  }
+
+  function resolveHint(msg, kind) {
+    var el = $('resolveHint');
+    if (!el) return;
+    el.textContent = msg || '';
+    el.classList.toggle('hint--err', kind === 'err');
+    el.classList.toggle('hint--ok', kind === 'ok');
+  }
+
+  function showResolvePanel(name) {
+    var map = { loading: 'resolveLoading', name: 'resolveNameView', address: 'resolveAddrView', error: 'resolveError' };
+    Object.keys(map).forEach(function (k) {
+      var el = $(map[k]);
+      if (el) el.classList.toggle('show', k === name);
+    });
+  }
+
+  function copyToClipboard(text, btnEl) {
+    var done = function () {
+      if (!btnEl) return;
+      btnEl.innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke="#34d399" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 6 9 17l-5-5"/></svg>';
+      setTimeout(function () { btnEl.innerHTML = ICONS.copy; }, 1400);
+    };
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      navigator.clipboard.writeText(text).then(done).catch(function () { fallbackCopy(text); done(); });
+    } else { fallbackCopy(text); done(); }
+  }
+
+  /** Append one text-record row to a `.rec-list` element. Returns false when the value is empty. */
+  function addRecordRow(listEl, key, val) {
+    if (val === '' || val == null) return false;
+    var row = document.createElement('div');
+    row.className = 'rec-row';
+    var k = document.createElement('span');
+    k.className = 'rec-k';
+    k.textContent = TEXT_RECORD_LABELS[key] || key;
+    var v = document.createElement('span');
+    v.className = 'rec-v';
+
+    function httpLink(href, label) {
+      var a = document.createElement('a');
+      a.className = 'link';
+      a.href = href;
+      a.target = '_blank';
+      a.rel = 'noopener noreferrer';
+      a.textContent = label == null ? href : label;
+      v.appendChild(a);
+    }
+
+    if (key === 'avatar' && /^https?:\/\//i.test(val)) {
+      var img = document.createElement('img');
+      img.className = 'rec-avatar-img';
+      img.loading = 'lazy';
+      img.alt = 'avatar';
+      img.src = val;
+      img.addEventListener('error', function () { img.remove(); });
+      v.appendChild(img);
+      httpLink(val, val.replace(/^https?:\/\//i, '').split('/')[0] + ' · open');
+    } else if (/^https?:\/\//i.test(val)) {
+      httpLink(val, val.replace(/^https?:\/\//i, '').slice(0, 48));
+    } else if (key === 'twitter' && /^@?[A-Za-z0-9_]{1,32}$/.test(val)) {
+      var handle = val.charAt(0) === '@' ? val.slice(1) : val;
+      httpLink('https://twitter.com/' + handle, '@' + handle);
+    } else {
+      v.textContent = val;
+      v.title = val;
+    }
+    row.appendChild(k);
+    row.appendChild(v);
+    listEl.appendChild(row);
+    return true;
+  }
+
+  function renderTextRecords(listEl, records) {
+    listEl.innerHTML = '';
+    var any = false;
+    TEXT_RECORD_KEYS.forEach(function (key) {
+      if (addRecordRow(listEl, key, (records || {})[key] || '')) any = true;
+    });
+    return any;
+  }
+
+  function handleResolve() {
+    if (!hasRegistry) {
+      resolveHint('The resolver needs a deployed registry — activate it first (panel above).', 'err');
+      showResolvePanel('');
+      var gate = $('resolveGate');
+      if (gate) gate.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      return;
+    }
+    if (state.inFlight.resolve) return;
+    var parsed = parseResolveInput($('resolveInput').value);
+    resolveHint('', null);
+    if (parsed.kind === 'invalid') {
+      resolveHint('Enter a name (a–z, 0–9, 3–32 chars) or a full 0x address.', 'err');
+      showResolvePanel('');
+      return;
+    }
+    state.inFlight.resolve = true;
+    showResolvePanel('loading');
+    var done = function () { state.inFlight.resolve = false; };
+    if (parsed.kind === 'name') {
+      resolveName(parsed.value).then(done, done);
+    } else {
+      resolveAddress(parsed.value).then(done, done);
+    }
+  }
+
+  function resolveName(name) {
+    resolveCtx.name = name;
+    var jobs = [{ method: 'eth_call', params: [{ to: REG_ADDR, data: C.callDataString(C.SELECTORS.ownerOf, name) }, 'latest'] }];
+    TEXT_RECORD_KEYS.forEach(function (key) {
+      jobs.push({ method: 'eth_call', params: [{ to: REG_ADDR, data: C.callDataArgs(C.SELECTORS.text, [{ type: 'string', value: name }, { type: 'string', value: key }]) }, 'latest'] });
+    });
+    return C.rpcCalls(jobs).then(function (res) {
+      if (!res[0].ok) {
+        var err = new Error((res[0].error && res[0].error.message) || 'RPC error');
+        err.code = 'RPC_ERROR';
+        throw err;
+      }
+      var records = {};
+      for (var i = 0; i < TEXT_RECORD_KEYS.length; i++) {
+        var rr = res[i + 1];
+        records[TEXT_RECORD_KEYS[i]] = rr && rr.ok ? C.decodeString(rr.value) : '';
+      }
+      var owner = C.decodeAddress(res[0].value);
+      setText('rsName', name + suffix());
+      var primBadge = $('rsPrimaryBadge');
+      var regCta = $('rsRegisterCta');
+      var ownerRow = $('rsOwnerRow');
+      var recordsEl = $('rsRecords');
+      var noRecs = $('rsNoRecords');
+      var profLink = $('rsProfileLink');
+
+      if (C.isZeroAddress(owner)) {
+        // free → honest "claim it" state
+        if (primBadge) primBadge.hidden = true;
+        if (ownerRow) ownerRow.hidden = true;
+        if (recordsEl) recordsEl.innerHTML = '';
+        if (noRecs) noRecs.hidden = true;
+        if (profLink) profLink.hidden = true;
+        if (regCta) regCta.hidden = false;
+        var rb = $('rsRegisterBtn');
+        if (rb) rb.textContent = 'Register ' + name + suffix();
+        showResolvePanel('name');
+        resolveHint(name + suffix() + ' is free — not registered on the ledger.', 'ok');
+        return;
+      }
+      if (regCta) regCta.hidden = true;
+      if (ownerRow) ownerRow.hidden = false;
+      setText('rsOwner', owner);
+      var oEl = $('rsOwner');
+      if (oEl) oEl.title = owner;
+      var oLink = $('rsOwnerLink');
+      if (oLink) { oLink.href = explorerUrl() + '/address/' + owner; oLink.target = '_blank'; }
+      if (profLink) { profLink.href = '#/name/' + name; }
+      var had = renderTextRecords(recordsEl, records);
+      if (noRecs) noRecs.hidden = had;
+      // primary badge — is this the owner's chosen primary handle?
+      if (primBadge) {
+        primBadge.hidden = true;
+        C.rpcCall('eth_call', [{ to: REG_ADDR, data: C.callDataAddress(C.SELECTORS.primaryName, owner) }, 'latest'])
+          .then(function (r) {
+            if (C.decodeString(r.result) === name) primBadge.hidden = false;
+          }).catch(function () {});
+      }
+      showResolvePanel('name');
+      resolveHint(had ? 'Live records from the Arc registry.' : 'Resolved from the Arc registry — this name has no text records yet.', had ? 'ok' : null);
+    }).catch(function (err) {
+      showResolvePanel('error');
+      var msg = (err && err.message) || 'RPC error';
+      if (/RPC unreachable|offline/i.test(msg)) msg = 'Arc RPC unreachable — resolution paused. Retry when the network is back.';
+      setText('resolveErrorMsg', 'Resolution failed: ' + msg);
+    });
+  }
+
+  function resolveAddress(addr) {
+    resolveCtx.address = addr;
+    setText('rsAddr', addr);
+    var aEl = $('rsAddr');
+    if (aEl) aEl.title = addr;
+    return C.rpcCalls([
+      { method: 'eth_call', params: [{ to: REG_ADDR, data: C.callDataAddress(C.SELECTORS.primaryName, addr) }, 'latest'] },
+      { method: 'eth_call', params: [{ to: REG_ADDR, data: C.callDataAddress(C.SELECTORS.namesOf, addr) }, 'latest'] }
+    ]).then(function (res) {
+      if (!res[0].ok || !res[1].ok) {
+        var err = new Error('RPC error resolving the address');
+        err.code = 'RPC_ERROR';
+        throw err;
+      }
+      var primary = C.decodeString(res[0].value);
+      var names = C.decodeStringArray(res[1].value);
+      var chip = $('rsAddrPrimaryChip');
+      var primDot = chip ? chip.querySelector('.dot') : null;
+      if (primDot) setLiveDot(primDot, !!primary);
+      setText('rsAddrPrimary', primary || 'none');
+      var listEl = $('rsNamesList');
+      listEl.innerHTML = '';
+      setText('rsNamesCount', String(names.length));
+      var emptyEl = $('rsNamesEmpty');
+      if (emptyEl) emptyEl.hidden = names.length > 0;
+      var hintEl = $('rsAddrHint');
+      if (hintEl) hintEl.textContent = names.length
+        ? 'Click a name to resolve its records.'
+        : 'Primary name and portfolio come straight from the registry reverse index.';
+      names.forEach(function (nm) {
+        var row = document.createElement('div');
+        row.className = 'rec-row';
+        var k = document.createElement('span');
+        k.className = 'rec-k';
+        k.textContent = 'name';
+        var v = document.createElement('span');
+        v.className = 'rec-v';
+        var b = document.createElement('button');
+        b.type = 'button';
+        b.className = 'link mono';
+        b.textContent = nm + suffix();
+        b.addEventListener('click', function () {
+          $('resolveInput').value = nm;
+          handleResolve();
+        });
+        v.appendChild(b);
+        row.appendChild(k);
+        row.appendChild(v);
+        listEl.appendChild(row);
+      });
+      showResolvePanel('address');
+      resolveHint(primary ? 'This address presents itself as ' + primary + suffix() + ' on Arc.' : 'This address has no primary name yet.', primary ? 'ok' : null);
+    }).catch(function (err) {
+      showResolvePanel('error');
+      var msg = (err && err.message) || 'RPC error';
+      if (/RPC unreachable|offline/i.test(msg)) msg = 'Arc RPC unreachable — resolution paused. Retry when the network is back.';
+      setText('resolveErrorMsg', 'Resolution failed: ' + msg);
+    });
+  }
+
+  /* ═══════════════════════════════════════════════════════════════════
+     3.7 · MY NAMES — namesOf dashboard (primary / transfer / records)
+     ═══════════════════════════════════════════════════════════════════ */
+
+  function setMnStatus(msg, kind) {
+    var el = $('mnStatus');
+    if (!el) return;
+    el.textContent = msg || '';
+    el.className = 'hint mn-status' + (kind ? ' ' + kind : '');
+  }
+
+  function addMnSession(name, txHash, label) {
+    var wrap = $('mnSessWrap');
+    var list = $('mnSessionList');
+    if (!wrap || !list) return;
+    show(wrap);
+    var item = document.createElement('div');
+    item.className = 'sess-item';
+    item.innerHTML =
+      '<span class="ok-dot">' + ICONS.check + '</span>' +
+      '<span class="nm mono">' + esc(name) + suffix() + '</span>' +
+      '<span class="when">' + esc(label) + ' · ' + new Date().toLocaleTimeString() + '</span>' +
+      '<a class="link lnk mono" href="' + explorerUrl() + '/tx/' + txHash + '" target="_blank" rel="noopener noreferrer">' + C.shortAddress(txHash, 8, 6) + '</a>';
+    list.insertBefore(item, list.firstChild);
+  }
+
+  /** EIP-1559 quote for an arbitrary registry write (20 gwei floor on Arc). */
+  function estimateTxGas(data, valueHex) {
+    if (!state.wallet.address) return Promise.resolve(null);
+    return C.rpcCall('eth_estimateGas', [{
+      from: state.wallet.address,
+      to: REG_ADDR,
+      value: valueHex || '0x0',
+      data: data
+    }]).then(function (r) {
+      var g = C.hexToBigInt(r.result);
+      return g > 0n ? g : null;
+    }).catch(function () { return null; });
+  }
+
+  function quoteAnyTx(data, valueHex) {
+    var quote = Promise.all([fetchFeeQuote(), estimateTxGas(data, valueHex)])
+      .then(function (pair) {
+        var fp = feeParamsFromQuote(pair[0]);
+        var gasUnits = pair[1];
+        var out = { text: feeLineText(fp, gasUnits), params: {} };
+        if (fp) {
+          out.params.maxFeePerGas = C.bigIntToHex(fp.maxFeePerGas);
+          out.params.maxPriorityFeePerGas = C.bigIntToHex(fp.maxPriorityFeePerGas);
+        }
+        return out;
+      });
+    var bail = new Promise(function (resolve) {
+      setTimeout(function () { resolve({ text: null, params: {} }); }, 6000);
+    });
+    return Promise.race([quote, bail]);
+  }
+
+  /**
+   * Send one registry write through the wallet with fee-aware params and
+   * receipt polling. `say` receives phase updates ({text,cls}).
+   * Resolves with the receipt; rejects on user rejection / revert.
+   */
+  function sendRegistryTx(data, valueHex, say) {
+    function st(msg, cls) { if (say) say({ text: msg, cls: cls }); }
+    if (!state.wallet.address) return Promise.reject({ code: 'NO_WALLET', message: 'Connect your wallet first.' });
+    if (state.wallet.chainId !== CHAIN.chainId) return Promise.reject({ code: 'WRONG_CHAIN', message: 'Switch your wallet to Arc Testnet first.' });
+    var p = provider();
+    if (!p) return Promise.reject({ code: 'NO_PROVIDER', message: 'No injected wallet found.' });
+    st('Estimating gas on Arc…', 'pend');
+    return quoteAnyTx(data, valueHex || '0x0').then(function (q) {
+      var params = { from: state.wallet.address, to: REG_ADDR, value: valueHex || '0x0', data: data };
+      if (q.params.maxFeePerGas) {
+        params.maxFeePerGas = q.params.maxFeePerGas;
+        params.maxPriorityFeePerGas = q.params.maxPriorityFeePerGas;
+      }
+      st((q.text ? 'Fee estimate: ' + q.text + '. ' : '') + 'Confirm in your wallet…', 'pend');
+      return p.request({ method: 'eth_sendTransaction', params: [params] });
+    }).then(function (txHash) {
+      st('Broadcast ' + C.shortAddress(txHash, 8, 6) + ' — waiting for finality…', 'pend');
+      return pollReceipt(txHash).then(function (receipt) {
+        if (String(receipt.status || '0x0') !== '0x1') {
+          var e = new Error('The transaction was included but reverted onchain.');
+          e.code = 'REVERTED';
+          throw e;
+        }
+        st('Confirmed in block ' + fmtBlock(receipt.blockNumber) + ' — ' + new Date().toLocaleTimeString() + ' ✓', 'ok');
+        return receipt;
+      });
+    });
+  }
+
+  function fetchRecordsFor(name) {
+    var jobs = TEXT_RECORD_KEYS.map(function (key) {
+      return { method: 'eth_call', params: [{ to: REG_ADDR, data: C.callDataArgs(C.SELECTORS.text, [{ type: 'string', value: name }, { type: 'string', value: key }]) }, 'latest'] };
+    });
+    return C.rpcCalls(jobs).then(function (res) {
+      var rec = {};
+      for (var i = 0; i < TEXT_RECORD_KEYS.length; i++) {
+        var r = res[i];
+        rec[TEXT_RECORD_KEYS[i]] = r && r.ok ? C.decodeString(r.value) : '';
+      }
+      return rec;
+    }).catch(function () {
+      var rec = {};
+      TEXT_RECORD_KEYS.forEach(function (key) { rec[key] = ''; });
+      return rec;
+    });
+  }
+
+  function renderMyNames() {
+    var p = provider();
+    var w = state.wallet;
+    var connect = $('mynamesConnect');
+    var gate = $('mynamesGate');
+    var live = $('mynamesLive');
+    var badge = $('mynamesBadge');
+    var badgeTxt = $('mynamesBadgeText');
+    var dot = $('mynamesDot');
+    if (connect) hide(connect);
+    if (gate) hide(gate);
+    if (live) hide(live);
+
+    if (!p || !w.address) {
+      if (connect) show(connect);
+      if (badge) badge.classList.remove('live');
+      if (badgeTxt) badgeTxt.textContent = 'Wallet disconnected';
+      if (dot) setLiveDot(dot, false);
+      return;
+    }
+    if (!hasRegistry) {
+      if (gate) show(gate);
+      if (badge) badge.classList.remove('live');
+      if (badgeTxt) badgeTxt.textContent = 'Needs deployment';
+      if (dot) setLiveDot(dot, false);
+      return;
+    }
+    if (live) show(live);
+    if (badge) badge.classList.add('live');
+    if (badgeTxt) badgeTxt.textContent = 'Registry live';
+    if (dot) setLiveDot(dot, true);
+
+    if (w.chainId !== CHAIN.chainId) {
+      setText('mnCount', '–');
+      setText('mnPrimaryName', '—');
+      var listEl = $('mnList');
+      if (listEl) listEl.innerHTML = '';
+      var emptyEl = $('mnEmpty');
+      if (emptyEl) hide(emptyEl);
+      setMnStatus('Wrong network — switch your wallet to Arc Testnet to load your names.', 'err');
+      return;
+    }
+    loadMyNames(false);
+  }
+
+  function loadMyNames(force) {
+    if (!state.wallet.address || !hasRegistry) return;
+    if (state.wallet.chainId !== CHAIN.chainId) return;
+    if (state.inFlight.mynames) return;
+    if (state.mynames.loaded && !force) {
+      renderMyNamesList();
+      return;
+    }
+    state.inFlight.mynames = true;
+    var addr = state.wallet.address;
+    setMnStatus('Reading namesOf(' + C.shortAddress(addr) + ')…', 'pend');
+    C.rpcCalls([
+      { method: 'eth_call', params: [{ to: REG_ADDR, data: C.callDataAddress(C.SELECTORS.namesOf, addr) }, 'latest'] },
+      { method: 'eth_call', params: [{ to: REG_ADDR, data: C.callDataAddress(C.SELECTORS.primaryName, addr) }, 'latest'] }
+    ]).then(function (res) {
+      if (!res[0].ok || !res[1].ok) {
+        var err = new Error((res[0].error && res[0].error.message) || 'RPC error');
+        err.code = 'RPC_ERROR';
+        throw err;
+      }
+      state.mynames.names = C.decodeStringArray(res[0].value);
+      state.mynames.primary = C.decodeString(res[1].value);
+      // pre-fetch text records for every owned name (parallel, tolerant)
+      var fetches = state.mynames.names.map(fetchRecordsFor);
+      return Promise.all(fetches).then(function (allRecs) {
+        state.mynames.names.forEach(function (nm, i) { state.mynames.records[nm] = allRecs[i]; });
+      });
+    }).then(function () {
+      state.mynames.loaded = true;
+      renderMyNamesList();
+    }).catch(function (err) {
+      var msg = (err && err.message) || 'read failed';
+      if (/RPC unreachable|offline/i.test(msg)) msg = 'Arc RPC unreachable — your names will load when the network is back.';
+      setMnStatus('Could not read your names: ' + msg, 'err');
+    }).finally(function () { state.inFlight.mynames = false; });
+  }
+
+  function initialsOf(name) {
+    return String(name || '').slice(0, 2).toUpperCase();
+  }
+
+  function mnSay(el, msg, cls) {
+    if (!el) return;
+    el.textContent = msg;
+    el.className = 'mn-status' + (cls ? ' ' + cls : '');
+    show(el);
+  }
+
+  function buildNameCard(name, idx) {
+    var rec = state.mynames.records[name] || {};
+    var isPrimary = state.mynames.primary === name;
+    var card = document.createElement('article');
+    card.className = 'glass mn-card';
+    card.dataset.name = name;
+
+    var avatarInner = '';
+    if (/^https?:\/\//i.test(rec.avatar || '')) {
+      avatarInner = '<img src="' + esc(rec.avatar) + '" alt="" loading="lazy" />';
+    } else {
+      avatarInner = '<span>' + esc(initialsOf(name)) + '</span>';
+    }
+
+    card.innerHTML =
+      '<div class="mn-top">' +
+        '<div class="mn-avatar">' + avatarInner + '</div>' +
+        '<div class="mn-meta">' +
+          '<div class="mn-name"><span class="mono">' + esc(name) + suffix() + '</span>' +
+            (isPrimary ? '<span class="res-badge ok">primary</span>' : '') +
+          '</div>' +
+          '<div class="mn-sub">' + (isPrimary ? 'your primary handle on Arc' : 'owned by your wallet · on the Arc registry') + '</div>' +
+        '</div>' +
+        '<div class="mn-top-actions">' +
+          (isPrimary ? '' : '<button class="btn btn-soft btn-sm" data-act="primary">Set as primary</button>') +
+          '<button class="btn btn-ghost btn-sm" data-act="expand" type="button">Transfer &amp; records</button>' +
+        '</div>' +
+        '<div class="mn-txline" data-role="line"></div>' +
+      '</div>' +
+      '<details class="mn-manage" data-role="manage">' +
+        '<summary>Manage name<svg class="chev" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m6 9 6 6 6-6"/></svg></summary>' +
+        '<div class="mn-manage-body">' +
+          '<div class="mn-sec">Transfer ownership</div>' +
+          '<div class="mn-row">' +
+            '<div class="field-wrap">' +
+              '<input class="field mono" data-role="to" placeholder="0x… new owner" spellcheck="false" autocapitalize="off" autocomplete="off" aria-label="New owner address" />' +
+            '</div>' +
+            '<button class="btn btn-danger btn-sm" data-act="transfer" type="button">Transfer</button>' +
+            '<button class="btn btn-ghost btn-sm" data-act="transfer-cancel" type="button" hidden>Cancel</button>' +
+          '</div>' +
+          '<div class="mn-sec" style="margin-top:16px">Text records — what others see when they resolve you</div>' +
+          '<div class="mn-fields">' +
+            '<label class="rec-field"><span>Avatar URL</span><div class="field-wrap"><input class="field" data-role="rec-avatar" placeholder="https://…" spellcheck="false" autocomplete="off" value="' + esc(rec.avatar || '') + '" /></div></label>' +
+            '<label class="rec-field"><span>Website</span><div class="field-wrap"><input class="field" data-role="rec-url" placeholder="https://…" spellcheck="false" autocomplete="off" value="' + esc(rec.url || '') + '" /></div></label>' +
+            '<label class="rec-field"><span>Twitter</span><div class="field-wrap"><input class="field" data-role="rec-twitter" placeholder="@handle" spellcheck="false" autocomplete="off" value="' + esc(rec.twitter || '') + '" /></div></label>' +
+            '<label class="rec-field"><span>About</span><div class="field-wrap"><input class="field" data-role="rec-description" placeholder="One line about you" autocomplete="off" maxlength="300" value="' + esc(rec.description || '') + '" /></div></label>' +
+          '</div>' +
+          '<div class="mn-status" data-role="status" hidden></div>' +
+          '<div style="display:flex;gap:10px;flex-wrap:wrap;margin-top:14px">' +
+            '<button class="btn btn-primary btn-sm" data-act="save">Save records</button>' +
+            '<button class="btn btn-ghost btn-sm" data-act="share" type="button">Share profile</button>' +
+          '</div>' +
+        '</div>' +
+      '</details>';
+
+    // avatar image load failure → initials fallback
+    var av = card.querySelector('.mn-avatar img');
+    if (av) {
+      av.addEventListener('error', function () {
+        av.outerHTML = '<span>' + esc(initialsOf(name)) + '</span>';
+      });
+    }
+
+    var line = card.querySelector('[data-role="line"]');
+    var statusEl = card.querySelector('[data-role="status"]');
+    var manage = card.querySelector('[data-role="manage"]');
+    var toInput = card.querySelector('[data-role="to"]');
+    var transferBtn = card.querySelector('[data-act="transfer"]');
+    var cancelBtn = card.querySelector('[data-act="transfer-cancel"]');
+    var pendingTransfer = null;
+
+    card.querySelector('[data-act="primary"]').addEventListener('click', function (e) {
+      e.preventDefault();
+      var btn = e.currentTarget;
+      btn.disabled = true;
+      mnSay(line, 'Preparing to set ' + name + suffix() + ' as your primary…', 'pend');
+      sendRegistryTx(C.callDataString(C.SELECTORS.setPrimaryName, name), '0x0', function (u) { mnSay(line, u.text, u.cls); })
+        .then(function (receipt) {
+          state.mynames.primary = name;
+          addMnSession(name, receipt.transactionHash, 'set as primary');
+          setText('mnPrimaryName', name);
+          setText('mnPrimaryName' , name);
+          loadMyNames(true);
+        })
+        .catch(function (err) {
+          if (err && err.code === 4001) mnSay(line, 'Rejected in your wallet — nothing was sent.', 'err');
+          else if (err && err.code === 'REVERTED') mnSay(line, err.message || 'The transaction reverted onchain.', 'err');
+          else mnSay(line, 'Failed: ' + ((err && err.message) || 'unknown error'), 'err');
+          if (btn) btn.disabled = false;
+        });
+    });
+
+    transferBtn.addEventListener('click', function () {
+      var to = String(toInput.value || '').trim().toLowerCase();
+      if (!/^0x[0-9a-f]{40}$/.test(to)) {
+        mnSay(statusEl, 'Enter a valid 0x address to transfer to.', 'err');
+        return;
+      }
+      if (!pendingTransfer) {
+        pendingTransfer = to;
+        transferBtn.textContent = 'Confirm transfer';
+        show(cancelBtn);
+        mnSay(statusEl, 'Transfer ' + name + suffix() + ' to ' + to + '? This moves ownership onchain.', 'pend');
+        return;
+      }
+      if (pendingTransfer !== to) { pendingTransfer = null; transferBtn.textContent = 'Transfer'; hide(cancelBtn); return; }
+      transferBtn.disabled = true;
+      mnSay(statusEl, 'Sending the transfer transaction…', 'pend');
+      sendRegistryTx(C.callDataArgs(C.SELECTORS.transfer, [{ type: 'string', value: name }, { type: 'address', value: to }]), '0x0', function (u) { mnSay(statusEl, u.text, u.cls); })
+        .then(function (receipt) {
+          addMnSession(name, receipt.transactionHash, 'transferred to ' + to);
+          mnSay(statusEl, name + suffix() + ' now belongs to ' + to + '. Reloading your portfolio…', 'ok');
+          state.mynames.loaded = false;
+          setTimeout(function () { loadMyNames(true); }, 900);
+        })
+        .catch(function (err) {
+          if (err && err.code === 4001) mnSay(statusEl, 'Rejected in your wallet — nothing was sent.', 'err');
+          else if (err && err.code === 'REVERTED') mnSay(statusEl, err.message || 'The transaction reverted onchain.', 'err');
+          else mnSay(statusEl, 'Failed: ' + ((err && err.message) || 'unknown error'), 'err');
+          transferBtn.disabled = false;
+          pendingTransfer = null;
+          transferBtn.textContent = 'Transfer';
+          hide(cancelBtn);
+        });
+    });
+
+    cancelBtn.addEventListener('click', function () {
+      pendingTransfer = null;
+      transferBtn.textContent = 'Transfer';
+      transferBtn.disabled = false;
+      hide(cancelBtn);
+      hide(statusEl);
+    });
+
+    card.querySelector('[data-act="save"]').addEventListener('click', function () {
+      var dirty = [];
+      var vals = {};
+      var errMsg = null;
+      TEXT_RECORD_KEYS.forEach(function (key) {
+        var input = card.querySelector('[data-role="rec-' + key + '"]');
+        var val = input ? String(input.value || '').trim() : '';
+        vals[key] = val;
+        if (key === 'avatar' || key === 'url') {
+          if (val !== '' && !/^(https?|ipfs):\/\//i.test(val)) errMsg = key === 'avatar' ? 'Avatar must be an http(s) URL.' : 'Website must be an http(s) URL.';
+        } else if (key === 'twitter') {
+          if (val !== '' && !/^@?[A-Za-z0-9_]{1,32}$/.test(val)) errMsg = 'Twitter should be a handle like @alice.';
+        }
+        if (val !== ((state.mynames.records[name] || {})[key] || '')) dirty.push(key);
+      });
+      if (errMsg) { mnSay(statusEl, errMsg, 'err'); return; }
+      if (!dirty.length) { mnSay(statusEl, 'No changes to save.', 'ok'); return; }
+      var btn = card.querySelector('[data-act="save"]');
+      btn.disabled = true;
+      mnSay(statusEl, 'Saving ' + dirty.length + ' record(s) — one tx each…', 'pend');
+
+      function next(i) {
+        if (i >= dirty.length) {
+          state.mynames.records[name] = vals;
+          addMnSession(name, '—', dirty.length + ' text record(s) updated');
+          mnSay(statusEl, 'Records saved onchain.', 'ok');
+          // re-render keeps everything in sync with what was written
+          loadMyNames(true);
+          return;
+        }
+        var key = dirty[i];
+        sendRegistryTx(
+          C.callDataArgs(C.SELECTORS.setText, [{ type: 'string', value: name }, { type: 'string', value: key }, { type: 'string', value: vals[key] }]),
+          '0x0',
+          function (u) { mnSay(statusEl, 'Record ' + (i + 1) + '/' + dirty.length + ' (' + key + '): ' + u.text, u.cls); }
+        ).then(function (receipt) {
+          addMnSession(name, receipt.transactionHash, 'set ' + key + ' record');
+          next(i + 1);
+        }).catch(function (err) {
+          if (err && err.code === 4001) mnSay(statusEl, 'Rejected in your wallet — records not saved.', 'err');
+          else if (err && err.code === 'REVERTED') mnSay(statusEl, err.message || 'The transaction reverted onchain.', 'err');
+          else mnSay(statusEl, 'Failed: ' + ((err && err.message) || 'unknown error'), 'err');
+          if (btn) btn.disabled = false;
+        });
+      }
+      next(0);
+    });
+
+    card.querySelector('[data-act="expand"]').addEventListener('click', function () {
+      manage.open = !manage.open;
+    });
+
+    card.querySelector('[data-act="share"]').addEventListener('click', function (e) {
+      e.preventDefault();
+      location.hash = '#/name/' + encodeURIComponent(name);
+    });
+
+    return card;
+  }
+
+  function renderMyNamesList() {
+    var listEl = $('mnList');
+    if (!listEl) return;
+    listEl.innerHTML = '';
+    var names = state.mynames.names;
+    var emptyEl = $('mnEmpty');
+    setText('mnCount', String(names.length));
+    setText('mnPrimaryName', state.mynames.primary || 'none');
+    if (!names.length) {
+      if (emptyEl) show(emptyEl);
+      setMnStatus('You do not own any names yet. Names are one transaction away.', null);
+      return;
+    }
+    if (emptyEl) hide(emptyEl);
+    names.forEach(function (nm, i) {
+      listEl.appendChild(buildNameCard(nm, i));
+    });
+    setMnStatus('Loaded ' + names.length + ' name(s) from the registry · ' + new Date().toLocaleTimeString(), 'ok');
   }
 
   /* ═══════════════════════════════════════════════════════════════════
