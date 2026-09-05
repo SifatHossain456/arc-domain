@@ -32,9 +32,10 @@
 
   var state = {
     telemetry: { ok: false, lastGood: null },
+    stats: { ok: false, lastGood: null, data: null },
     wallet: { address: null, chainId: null, balanceRaw: null, busy: false },
     reg: { priceRaw: 0n, priceLoaded: false, totalNames: null },
-    inFlight: { telemetry: false, search: false },
+    inFlight: { telemetry: false, search: false, stats: false },
     session: [] // { name, txHash, ts } — real, confirmed transactions only
   };
 
@@ -359,6 +360,14 @@
   var REG_ADDR = String(CFG.registryAddress || '').trim().toLowerCase();
   var hasRegistry = /^0x[0-9a-f]{40}$/.test(REG_ADDR);
 
+  // Arc gas rules (verified): EIP-1559 type-2 only, maxFeePerGas >= 20 gwei
+  // floor, priority tip 0–1 gwei. Native gas = USDC (18 decimals).
+  var GWEI = 1000000000n;
+  var TX_FEE_FLOOR = BigInt((CFG.txFees && CFG.txFees.maxFeeFloorGwei) || 20) * GWEI;
+  var TX_TIP = BigInt((CFG.txFees && CFG.txFees.tipGwei) || 1) * GWEI;
+  var STATS_CFG = CFG.stats || {};
+  var SIMPLE_TX_GAS = Number(STATS_CFG.simpleTransferGas || 21000);
+
   function suffix() { return CFG.displaySuffix || ''; }
 
   function registryCall(data) {
@@ -440,6 +449,10 @@
     return 'registry fee ' + C.formatUnits(state.reg.priceRaw, CHAIN.nativeCurrency.decimals).display + ' USDC + Arc gas (USDC).';
   }
 
+  function registerValueHex() {
+    return state.reg.priceLoaded && state.reg.priceRaw > 0n ? C.bigIntToHex(state.reg.priceRaw) : '0x0';
+  }
+
   function handleSearch() {
     var v = C.validateName($('nameInput').value);
     hint('', null);
@@ -480,6 +493,13 @@
             hint(v.name + suffix() + ' is available and ready to register.', 'ok');
           } else {
             hint('Connect your wallet on Arc testnet to register.', 'err');
+          }
+          // Fee-aware estimate before you confirm (EIP-1559, 20 gwei floor).
+          setText('availHint', '');
+          if (connected) {
+            quoteForRegister(v.name, registerValueHex()).then(function (q) {
+              setText('availHint', q.text ? 'Fee estimate: ' + q.text : '');
+            }).catch(function () {});
           }
         } else {
           // taken → fetch owner
@@ -538,19 +558,31 @@
     if (!p) return;
 
     var name = v.name;
-    var valueHex = state.reg.priceLoaded && state.reg.priceRaw > 0n ? C.bigIntToHex(state.reg.priceRaw) : '0x0';
+    var valueHex = registerValueHex();
     var data = C.callDataString(C.SELECTORS.register, name);
 
     hide($('registerBtn'));
     showPanel('tx');
     setSteps(1, 0, 0);
     setText('stepSignTitle', 'Confirm registration of ' + name + suffix());
+    var feeWrap = $('feeEstWrap');
+    if (feeWrap) feeWrap.hidden = false;
+    setText('feeEstText', 'Estimating gas on Arc…');
     $('txAnotherBtn').hidden = true;
     $('panelTx').scrollIntoView({ behavior: 'smooth', block: 'nearest' });
 
-    p.request({
-      method: 'eth_sendTransaction',
-      params: [{ from: state.wallet.address, to: REG_ADDR, value: valueHex, data: data }]
+    // Fee-aware tx: quote EIP-1559 fees (maxFeePerGas >= 20 gwei, tip 1 gwei)
+    // and estimate gas, show the USDC fee before the wallet prompt, then send
+    // with explicit fee caps. Never blocks on the quote — if it fails, the
+    // wallet estimates and the UI says so honestly.
+    quoteForRegister(name, valueHex).then(function (q) {
+      setText('feeEstText', q.text || 'Fee estimate unavailable — your wallet will price the gas.');
+      var params = { from: state.wallet.address, to: REG_ADDR, value: valueHex, data: data };
+      if (q.params.maxFeePerGas) {
+        params.maxFeePerGas = q.params.maxFeePerGas;
+        params.maxPriorityFeePerGas = q.params.maxPriorityFeePerGas;
+      }
+      return p.request({ method: 'eth_sendTransaction', params: [params] });
     }).then(function (txHash) {
       // signed & broadcast
       setSteps(2, 1, 0);
@@ -627,6 +659,207 @@
   function resetConsole() {
     hint('', null);
     showPanel('');
+  }
+
+  /* ═══════════════════════════════════════════════════════════════════
+     3.5 · FEE-AWARE TX (EIP-1559 on Arc) + NETWORK STATS (Blockscout)
+     ═══════════════════════════════════════════════════════════════════ */
+
+  function fmtGweiNum(weiBig) {
+    return (Number(weiBig) / 1e9).toFixed(2).replace(/\.?0+$/, '');
+  }
+
+  /**
+   * Quote current Arc gas from eth_feeHistory (base fee of the newest sampled
+   * block). Falls back to eth_gasPrice when feeHistory is unavailable. Returns
+   * null only when the RPC itself is unreachable — callers then let the wallet
+   * decide the fees (never blocking the user on an estimate).
+   */
+  function fetchFeeQuote() {
+    function fromGasPrice() {
+      return C.rpcCall('eth_gasPrice', [])
+        .then(function (r) {
+          return { baseFee: C.hexToBigInt(r.result), tip: TX_TIP, floor: TX_FEE_FLOOR };
+        })
+        .catch(function () { return null; });
+    }
+    return C.rpcCall('eth_feeHistory', ['0x5', 'latest', []])
+      .then(function (r) {
+        var bf = (r && r.result && r.result.baseFeePerGas) || [];
+        if (!bf.length) throw new Error('no baseFeePerGas in feeHistory');
+        return { baseFee: C.hexToBigInt(bf[bf.length - 1]), tip: TX_TIP, floor: TX_FEE_FLOOR };
+      })
+      .catch(fromGasPrice);
+  }
+
+  /** EIP-1559 type-2 params honouring Arc: maxFeePerGas >= 20 gwei, tip 1 gwei. */
+  function feeParamsFromQuote(q) {
+    if (!q) return null;
+    var cap = q.baseFee * 2n + q.tip;
+    if (cap < q.floor) cap = q.floor; // Arc's hard floor
+    return {
+      maxFeePerGas: cap,
+      maxPriorityFeePerGas: q.tip,
+      effectivePerGas: q.baseFee + q.tip, // realistically paid per gas unit
+      baseFee: q.baseFee
+    };
+  }
+
+  /** eth_estimateGas for the exact register call (null when it cannot be simulated). */
+  function estimateRegisterGas(name, valueHex) {
+    if (!state.wallet.address) return Promise.resolve(null);
+    var data = C.callDataString(C.SELECTORS.register, name);
+    return C.rpcCall('eth_estimateGas', [{
+      from: state.wallet.address,
+      to: REG_ADDR,
+      value: valueHex || '0x0',
+      data: data
+    }]).then(function (r) {
+      var g = C.hexToBigInt(r.result);
+      return g > 0n ? g : null;
+    }).catch(function () { return null; });
+  }
+
+  /** "≈ $0.000041 USDC total gas · 68,000 gas @ 0.6 gwei + 1 tip (cap 20)" */
+  function feeLineText(fp, gasUnits) {
+    if (!fp || gasUnits == null) return null;
+    var totalWei = gasUnits * fp.effectivePerGas;
+    var usdc = C.formatUnits(totalWei, 18).display;
+    return '≈ $' + usdc + ' USDC total gas · ' + gasUnits.toString() + ' gas @ ' +
+      fmtGweiNum(fp.effectivePerGas) + ' gwei + 1 tip (cap ' + fmtGweiNum(fp.maxFeePerGas) + ' gwei)';
+  }
+
+  /**
+   * Full fee-aware prep for a register tx: resolves to { text, params }.
+   * params carries hex maxFeePerGas/maxPriorityFeePerGas when a quote exists.
+   */
+  function quoteForRegister(name, valueHex) {
+    var quote = Promise.all([fetchFeeQuote(), estimateRegisterGas(name, valueHex)])
+      .then(function (pair) {
+        var fp = feeParamsFromQuote(pair[0]);
+        var gasUnits = pair[1];
+        var out = { text: feeLineText(fp, gasUnits), params: {} };
+        if (fp) {
+          out.params.maxFeePerGas = C.bigIntToHex(fp.maxFeePerGas);
+          out.params.maxPriorityFeePerGas = C.bigIntToHex(fp.maxPriorityFeePerGas);
+        }
+        return out;
+      });
+    // Never stall the wallet prompt on slow RPCs: after 6 s proceed fee-less.
+    var bail = new Promise(function (resolve) {
+      setTimeout(function () { resolve({ text: null, params: {} }); }, 6000);
+    });
+    return Promise.race([quote, bail]);
+  }
+
+  /* ── Network stats panel (Blockscout REST API, ~15 s cadence) ── */
+
+  function fmtIntStat(v) {
+    var n = Number(v);
+    return isFinite(n) ? n.toLocaleString('en-US') : '—';
+  }
+
+  /** Cost of a 21,000-gas transfer at gwei price, in USDC (~$1). */
+  function fmtUsdPerTransfer(gweiNum) {
+    var n = Number(gweiNum);
+    if (!isFinite(n)) return '—';
+    var usd = (n * SIMPLE_TX_GAS) / 1e9; // gwei·1e9 wei/gas · 21000 gas / 1e18
+    var s = usd.toFixed(8).replace(/0+$/, '').replace(/\.$/, '');
+    return '$' + (s === '-0' ? '0' : s);
+  }
+
+  function fmtPctStat(v) {
+    var n = Number(v);
+    return isFinite(n) ? n.toFixed(2).replace(/\.?0+$/, '') : '—';
+  }
+
+  function fmtAvgBlockTime(ms) {
+    var n = Number(ms);
+    if (!isFinite(n)) return '—';
+    var s = n / 1000;
+    return s.toFixed(s < 10 ? 2 : 1).replace(/\.?0+$/, '') + ' s';
+  }
+
+  var STAT_IDS = ['statsGasSlow', 'statsGasAvg', 'statsGasFast', 'statsTxToday',
+    'statsAddr', 'statsTotalTx', 'statsUtil', 'statsAvgBlock'];
+  var STAT_USD_IDS = ['statsGasSlowUsd', 'statsGasAvgUsd', 'statsGasFastUsd'];
+
+  function renderStats(s) {
+    var gp = s.gas_prices || {};
+    function setGas(id, usdId, v) {
+      if (v == null) { setText(id, '—'); setText(usdId, '—'); return; }
+      setText(id, Number(v).toFixed(2).replace(/\.?0+$/, ''));
+      setText(usdId, '≈ ' + fmtUsdPerTransfer(v) + ' per transfer');
+    }
+    setGas('statsGasSlow', 'statsGasSlowUsd', gp.slow);
+    setGas('statsGasAvg', 'statsGasAvgUsd', gp.average);
+    setGas('statsGasFast', 'statsGasFastUsd', gp.fast);
+    setText('statsTxToday', fmtIntStat(s.transactions_today));
+    setText('statsAddr', fmtIntStat(s.total_addresses));
+    setText('statsTotalTx', fmtIntStat(s.total_transactions));
+    setText('statsUtil', fmtPctStat(s.network_utilization_percentage));
+    setText('statsAvgBlock', fmtAvgBlockTime(s.average_block_time));
+  }
+
+  function statsOffline(msg) {
+    setLiveDot($('statsDot'), false);
+    var line = $('statsStatusLine');
+    if (line) line.innerHTML = msg;
+    setText('statsRefreshHint', 'retrying every ' + ((STATS_CFG.refreshMs || 15000) / 1000) + ' s');
+    setText('statsEndpoint', 'stats API unreachable');
+    STAT_IDS.forEach(function (id) {
+      var el = $(id);
+      if (el) el.textContent = '—';
+    });
+    STAT_USD_IDS.forEach(function (id) { setText(id, '—'); });
+  }
+
+  function tickStats() {
+    if (state.inFlight.stats) return Promise.resolve(state.stats);
+    state.inFlight.stats = true;
+    var url = STATS_CFG.url;
+    var ctrl = typeof AbortController !== 'undefined' ? new AbortController() : null;
+    var timer = ctrl ? setTimeout(function () { ctrl.abort(); }, 15000) : null;
+
+    if (!url) {
+      statsOffline('<b style="color:var(--err)">Stats offline</b> — no stats API configured in js/config.js.');
+      state.inFlight.stats = false;
+      return Promise.resolve(state.stats);
+    }
+
+    return fetch(url, {
+      headers: { accept: 'application/json' },
+      signal: ctrl ? ctrl.signal : undefined
+    }).then(function (res) {
+      if (!res.ok) throw new Error('HTTP ' + res.status);
+      return res.json();
+    }).then(function (s) {
+      if (!s || typeof s !== 'object' || !s.gas_prices || s.gas_prices.average == null) {
+        throw new Error('unexpected stats payload');
+      }
+      state.stats.data = s;
+      state.stats.ok = true;
+      state.stats.lastGood = Date.now();
+      renderStats(s);
+      setLiveDot($('statsDot'), true);
+      var line = $('statsStatusLine');
+      if (line) line.innerHTML = '<b style="color:var(--ok)">Live</b> — Blockscout stats API responding';
+      setText('statsRefreshHint', 'auto-refreshes every ' + ((STATS_CFG.refreshMs || 15000) / 1000) + ' s · ' + new Date().toLocaleTimeString());
+      setText('statsEndpoint', 'via ' + String(url).replace(/^https?:\/\//, ''));
+      return state.stats;
+    }).catch(function () {
+      state.stats.ok = false;
+      statsOffline('<b style="color:var(--err)">Stats offline</b> — Blockscout API unreachable. The RPC telemetry above stays live.');
+      return state.stats;
+    }).finally(function () {
+      state.inFlight.stats = false;
+      if (ctrl) clearTimeout(timer);
+    });
+  }
+
+  function startStats() {
+    tickStats();
+    setInterval(function () { tickStats(); }, STATS_CFG.refreshMs || 15000);
   }
 
   /* ═══════════════════════════════════════════════════════════════════
@@ -811,6 +1044,7 @@
     bindProviderEvents();
     renderWallet();
     startTelemetry();
+    startStats();
     // wallets may inject late
     window.addEventListener('ethereum#initialized', function () {
       renderWallet(); bindProviderEvents(); tryRestoreSession();

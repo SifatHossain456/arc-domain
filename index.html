@@ -290,6 +290,90 @@
             </button>
           </div>
         </div>
+
+        <!-- ── Blockscout network stats (separate live source, every ~15 s) ── -->
+        <div class="net-subgroup" data-reveal>
+          <div class="net-divider" role="separator"></div>
+          <div class="net-group-head">
+            <div class="net-group-title">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 12h4l3-8 4 16 3-8h4"/></svg>
+              Network stats
+            </div>
+            <span class="chip" style="flex:none">
+              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 12a9 9 0 1 1-2.64-6.36M21 3v6h-6"/></svg>
+              Blockscout · every 15 s
+            </span>
+          </div>
+          <p class="net-group-sub">
+            Gas guidance and chain counters from the free
+            <a class="link" href="https://testnet.arcscan.app/api-docs" target="_blank" rel="noopener noreferrer">Blockscout stats API</a> —
+            a second, independent source alongside the RPC telemetry above. The “per transfer” figure
+            is a plain 21,000-gas USDC transfer at that price.
+          </p>
+
+          <div class="net-grid stats-grid">
+            <div class="glass net-card">
+              <div class="net-label"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M13 2 3 14h7l-1 8 10-12h-7l1-8Z"/></svg> Gas · slow</div>
+              <div class="net-value"><span class="mono" id="statsGasSlow"><span class="sk">—</span></span><span class="net-unit">gwei</span></div>
+              <div class="net-sub" id="statsGasSlowUsd">≈ $— per transfer</div>
+            </div>
+
+            <div class="glass net-card">
+              <div class="net-label"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M13 2 3 14h7l-1 8 10-12h-7l1-8Z"/></svg> Gas · average</div>
+              <div class="net-value"><span class="mono" id="statsGasAvg"><span class="sk">—</span></span><span class="net-unit">gwei</span></div>
+              <div class="net-sub" id="statsGasAvgUsd">≈ $— per transfer</div>
+            </div>
+
+            <div class="glass net-card">
+              <div class="net-label"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M13 2 3 14h7l-1 8 10-12h-7l1-8Z"/></svg> Gas · fast</div>
+              <div class="net-value"><span class="mono" id="statsGasFast"><span class="sk">—</span></span><span class="net-unit">gwei</span></div>
+              <div class="net-sub" id="statsGasFastUsd">≈ $— per transfer</div>
+            </div>
+
+            <div class="glass net-card">
+              <div class="net-label"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><path d="M4 20h16M6 20V9M10 20V4M14 20v-7M18 20V6"/></svg> Transactions today</div>
+              <div class="net-value mono" id="statsTxToday"><span class="sk">—</span></div>
+              <div class="net-sub">last 24 h on Arc testnet</div>
+            </div>
+
+            <div class="glass net-card">
+              <div class="net-label"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.87M16 3.13a4 4 0 0 1 0 7.75"/></svg> Total addresses</div>
+              <div class="net-value mono" id="statsAddr"><span class="sk">—</span></div>
+              <div class="net-sub">accounts on the ledger</div>
+            </div>
+
+            <div class="glass net-card">
+              <div class="net-label"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 4h16v16H4z"/><path d="m4 9 8 6 8-6"/></svg> Total transactions</div>
+              <div class="net-value mono" id="statsTotalTx"><span class="sk">—</span></div>
+              <div class="net-sub">all-time, settled onchain</div>
+            </div>
+
+            <div class="glass net-card">
+              <div class="net-label"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 3v9l5.5 3.2"/></svg> Network utilization</div>
+              <div class="net-value"><span class="mono" id="statsUtil"><span class="sk">—</span></span><span class="net-unit">%</span></div>
+              <div class="net-sub">recent block capacity used</div>
+            </div>
+
+            <div class="glass net-card">
+              <div class="net-label"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg> Avg block time</div>
+              <div class="net-value"><span class="mono" id="statsAvgBlock"><span class="sk">—</span></span></div>
+              <div class="net-sub">sub-second, deterministic finality</div>
+            </div>
+          </div>
+
+          <div class="net-status">
+            <div class="net-status-left">
+              <span class="dot dot--off" id="statsDot" aria-hidden="true"></span>
+              <span id="statsStatusLine"><b>Connecting</b> to Blockscout stats API…</span>
+              <span class="mono" id="statsEndpoint">—</span>
+            </div>
+            <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
+              <span class="faint" style="font-size:12.5px" id="statsRefreshHint">auto-refreshes every 15 s</span>
+              <a class="btn btn-ghost btn-sm" href="https://testnet.arcscan.app/gas-tracker" target="_blank" rel="noopener noreferrer">Gas tracker</a>
+              <a class="btn btn-ghost btn-sm" href="https://status.arc.io" target="_blank" rel="noopener noreferrer">Arc status</a>
+            </div>
+          </div>
+        </div>
       </div>
     </section>
 
@@ -502,6 +586,10 @@
 
             <!-- transaction flow -->
             <div class="panel" id="panelTx">
+              <div class="fee-est" id="feeEstWrap" hidden>
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M13 2 3 14h7l-1 8 10-12h-7l1-8Z"/></svg>
+                <span id="feeEstText"></span>
+              </div>
               <div class="tx-flow show">
                 <div class="tx-step active" id="stepSign">
                   <span class="st-ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" aria-hidden="true"><path d="M20 12v10H4V12"/><path d="M12 2v14M7 11l5 5 5-5"/></svg></span>

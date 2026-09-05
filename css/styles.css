@@ -33,6 +33,8 @@
 
 * { box-sizing: border-box; }
 
+[hidden] { display: none !important; }
+
 html { scroll-behavior: smooth; -webkit-text-size-adjust: 100%; }
 
 body {
@@ -269,6 +271,27 @@ section { padding: 92px 0; }
   margin-top: 20px; padding: 16px 20px; border-radius: 16px; border: 1px solid var(--line); background: rgba(255,255,255,0.028); }
 .net-status-left { display: flex; align-items: center; gap: 10px; font-size: 14px; color: var(--muted); flex-wrap: wrap; }
 .net-status-left .mono { color: var(--faint); font-size: 12.5px; }
+
+/* Blockscout network stats subgroup (inside #network) */
+.net-subgroup { margin-top: 44px; }
+.net-divider { height: 1px; margin: 0 0 28px; background: linear-gradient(90deg, transparent, var(--line-strong) 18%, var(--line-strong) 82%, transparent); }
+.net-group-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; margin-bottom: 10px; }
+.net-group-title { display: inline-flex; align-items: center; gap: 10px; font-family: var(--font-display); font-weight: 600; font-size: 17px; letter-spacing: -0.01em; color: var(--ink); }
+.net-group-title svg { width: 18px; height: 18px; color: var(--accent3); }
+.net-group-sub { margin: 0 0 24px; color: var(--muted); font-size: 14px; max-width: 68ch; }
+.net-value .net-unit { font-size: 0.55em; color: var(--faint); font-weight: 600; margin-left: 5px; letter-spacing: 0.02em; }
+.stats-grid .net-card .net-sub { font-variant-numeric: tabular-nums; }
+
+/* fee estimate line inside the tx panel */
+.fee-est[hidden] { display: none; }
+.fee-est { display: flex; align-items: flex-start; gap: 10px; margin: 2px 0 16px; padding: 11px 14px;
+  border-radius: 12px; font-size: 13px; color: var(--muted);
+  background: rgba(34, 211, 238, 0.05); border: 1px solid rgba(34, 211, 238, 0.22); line-height: 1.55; }
+.fee-est svg { width: 16px; height: 16px; flex: none; margin-top: 2px; color: var(--accent3); }
+.fee-est b { color: var(--ink); font-weight: 600; }
+@media (max-width: 560px) {
+  .net-group-head { align-items: flex-start; }
+}
 
 /* ═══════════════════════════ Wallet ═══════════════════════════ */
 .wallet-shell { max-width: 640px; margin: 0 auto; padding: 30px; }

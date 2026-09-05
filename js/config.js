@@ -31,6 +31,25 @@
     docsUrl: 'https://docs.arc.network'
   };
 
+  // Blockscout REST API (free) — powers the live Network stats panel.
+  // GET https://testnet.arcscan.app/api/v2/stats → gas_prices {slow,average,fast}
+  // in gwei, transactions_today, total_transactions, total_addresses,
+  // network_utilization_percentage, average_block_time (ms).
+  var STATS = {
+    url: 'https://testnet.arcscan.app/api/v2/stats',
+    refreshMs: 15000,          // panel refresh cadence
+    simpleTransferGas: 21000,  // plain USDC transfer gas — used for the "$ per transfer" column
+    gasTrackerUrl: 'https://testnet.arcscan.app/gas-tracker',
+    statusUrl: 'https://status.arc.io'
+  };
+
+  // Arc gas rules (verified): EIP-1559 type-2 transactions only, with
+  // maxFeePerGas >= 20 gwei (hard floor) and a priority tip of 0–1 gwei.
+  var TX_FEES = {
+    maxFeeFloorGwei: 20, // Arc's minimum maxFeePerGas
+    tipGwei: 1           // maxPriorityFeePerGas we send
+  };
+
   // Deployment address of contracts/ArcNameRegistry.sol on Arc testnet.
   // Until this is set, the app honestly disables availability checks and
   // registration and shows the "deploy to activate" panel instead.
@@ -46,7 +65,9 @@
     minNameLength: 3,
     maxNameLength: 32,
     receiptPollMs: 1500,         // tx receipt polling interval
-    receiptTimeoutMs: 90000      // give up polling after this long
+    receiptTimeoutMs: 90000,     // give up polling after this long
+    stats: STATS,
+    txFees: TX_FEES
   };
 
   root.ARC_CONFIG = CONFIG;
