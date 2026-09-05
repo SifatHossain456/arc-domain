@@ -1,0 +1,26 @@
+{
+  "name": "arc-domain",
+  "version": "1.0.0",
+  "description": "ArcName — domain name registration & management dApp on the Arc Network testnet (static app + Hardhat project for contracts/ArcNameRegistry.sol).",
+  "license": "MIT",
+  "private": true,
+  "scripts": {
+    "test": "npx hardhat test",
+    "compile": "npx hardhat compile",
+    "deploy:arc": "npx hardhat run scripts/deploy.js --network arcTestnet",
+    "serve": "npx serve ."
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/SifatHossain456/arc-domain.git"
+  },
+  "bugs": {
+    "url": "https://github.com/SifatHossain456/arc-domain/issues"
+  },
+  "homepage": "https://github.com/SifatHossain456/arc-domain#readme",
+  "devDependencies": {
+    "@nomicfoundation/hardhat-toolbox": "^5.0.0",
+    "dotenv": "^17.4.2",
+    "hardhat": "^2.22.0"
+  }
+}

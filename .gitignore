@@ -1,16 +1,18 @@
-# dependencies / build
+# Hardhat
+artifacts/
+cache/
+coverage/
+coverage.json/
+typechain-types/
+
+# Dependencies
 node_modules/
-*.log
 
-# vercel
-.vercel/
-vercel/.env*
+# Secrets — never commit private keys
+.env
+.env.local
 
-# os / editor
+# Misc
 .DS_Store
-Thumbs.db
-.vscode/
-.idea/
-
-# temp
-*.tmp
+npm-debug.log*
+*.log

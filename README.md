@@ -33,7 +33,8 @@ honest by default: **every number on screen streams live from the Arc RPC, and n
 | Wallet connect via injected EIP-1193 + `wallet_addEthereumChain` (Arc testnet, 5042002) | ✅ built-in |
 | Native USDC balance (`eth_getBalance`, 18-dec native — see note below) | ✅ built-in |
 | Name search + availability + register flow | ✅ built-in, **activates after you deploy the registry** |
-| ENS-style registry (`contracts/ArcNameRegistry.sol`) | ✅ included, deploy via Remix |
+| ENS-style registry (`contracts/ArcNameRegistry.sol`) | ✅ included, deploy via Remix or Hardhat |
+| Hardhat project — compile, 35 tests, one-command Arc deploy | ✅ `npm test` + `scripts/deploy.js` |
 | Deploy-to-activate gate (no fake registrations) | ✅ built-in |
 | Vercel-ready static deploy | ✅ `vercel.json` |
 
@@ -72,7 +73,13 @@ arc-domain/
 │   └── app.js                 # UI glue: telemetry, wallet, registry console
 ├── contracts/
 │   └── ArcNameRegistry.sol    # minimal ENS-style registry (Solidity 0.8.20+)
-├── DEPLOY.md                  # deploy the registry to Arc testnet (Remix walkthrough)
+├── scripts/
+│   └── deploy.js              # deploy to Arc testnet (`--network arcTestnet`)
+├── test/
+│   └── ArcNameRegistry.test.js# 35-test suite (`npm test`)
+├── hardhat.config.js          # hardhat + arcTestnet networks (.env PRIVATE_KEY)
+├── .env.example               # copy to .env for deploys (never commit .env)
+├── DEPLOY.md                  # deploy the registry (Remix walkthrough + ABI reference)
 ├── vercel.json                # static hosting config
 └── README.md
 ```
@@ -103,10 +110,36 @@ vercel            # or: vercel --prod
 Or connect the GitHub repo in the Vercel dashboard — framework preset **Other**, build command empty,
 output directory `.`. That’s it.
 
+## Deploy in 3 commands (Hardhat)
+
+The repo ships a ready Hardhat project — `hardhat.config.js` (networks `hardhat` +
+`arcTestnet`), a 35-test suite and `scripts/deploy.js` — so deploying the registry to
+Arc testnet from your terminal is three commands:
+
+```bash
+# 1 · fund a wallet with test USDC (gas is paid in USDC on Arc)
+open https://faucet.circle.com
+
+# 2 · create .env from .env.example and paste the wallet's private key
+cp .env.example .env      # then edit .env → PRIVATE_KEY=0x…
+
+# 3 · compile, test, deploy
+npm test
+npx hardhat run scripts/deploy.js --network arcTestnet
+```
+
+The deploy script prints the deployed address and the **exact line** to paste into
+[`js/config.js`](js/config.js) (`var REGISTRY_ADDRESS = '0x…';`). Deployment transactions
+are EIP-1559 type-2 and honour Arc's gas rules — `maxFeePerGas` ≥ 20 gwei, tip 0–1 gwei
+(see `.env.example`). The constructor fee defaults to `0` (free names); set
+`ARC_INITIAL_PRICE=1` in `.env` to charge 1 USDC per name. Prefer a click-through?
+[DEPLOY.md](DEPLOY.md) still has the full Remix walkthrough and the ABI/selector reference.
+
 ## Activating registration (one-time)
 
-1. Deploy `contracts/ArcNameRegistry.sol` to Arc testnet — follow [DEPLOY.md](DEPLOY.md) (Remix steps,
-   constructor fee in 18-dec native USDC, e.g. `0` = free).
+1. Deploy `contracts/ArcNameRegistry.sol` to Arc testnet — either the Hardhat
+   [3-command flow](#deploy-in-3-commands-hardhat) above, or the Remix walkthrough in
+   [DEPLOY.md](DEPLOY.md) (constructor fee in 18-dec native USDC, e.g. `0` = free).
 2. Put the deployed address in `js/config.js` → `REGISTRY_ADDRESS`.
 3. Refresh. The console goes live: availability checks, fee, name count and registration transactions
    all talk to your contract onchain. Until then the app shows the deploy gate — nothing is faked.
