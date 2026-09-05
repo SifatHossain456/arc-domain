@@ -37,6 +37,8 @@ honest by default: **every number on screen streams live from the Arc RPC, and n
 | Hardhat project — compile, 35 tests, one-command Arc deploy | ✅ `npm test` + `scripts/deploy.js` |
 | Deploy-to-activate gate (no fake registrations) | ✅ built-in |
 | Vercel-ready static deploy | ✅ `vercel.json` |
+| Live network stats — gas slow/avg/fast (gwei + $ per 21k-gas transfer), tx today, addresses, utilization, avg block time | ✅ Blockscout API, ~15 s, honest offline state |
+| SEO/PWA shell — webmanifest, SVG favicon, OG/Twitter, JSON-LD, robots.txt, sitemap.xml | ✅ included |
 
 > **USDC decimals note.** Arc runs USDC as its **native** token. Per the official Arc docs
 > ([EVM differences](https://docs.arc.io/arc/references/evm-differences)), the native interface —
@@ -80,6 +82,10 @@ arc-domain/
 ├── hardhat.config.js          # hardhat + arcTestnet networks (.env PRIVATE_KEY)
 ├── .env.example               # copy to .env for deploys (never commit .env)
 ├── DEPLOY.md                  # deploy the registry (Remix walkthrough + ABI reference)
+├── ROADMAP.md                 # P1 done → P2–P5 planned (+ "not adding")
+├── favicon.svg                # brand mark (SVG favicon / PWA icon / og:image stand-in)
+├── site.webmanifest           # PWA manifest
+├── robots.txt / sitemap.xml   # SEO (sitemap host is a placeholder — see below)
 ├── vercel.json                # static hosting config
 └── README.md
 ```
@@ -166,6 +172,26 @@ unreachable). You can confirm the same numbers yourself with any RPC tool, e.g.:
 curl -s https://rpc.testnet.arc.network -H "Content-Type: application/json" \
   -d '{"jsonrpc":"2.0","method":"eth_blockNumber","params":[],"id":1}'
 ```
+
+## Roadmap
+
+See [ROADMAP.md](ROADMAP.md). **P1 — Testnet foundation** (current `main`) is done: Hardhat project
+with 35 tests + Arc deploy script, fee-aware EIP-1559 registration transactions, the live Network
+panel above, and the SEO/PWA shell. P2–P5 are planned — resolver UX, Blockscout activity feed,
+accessibility/Lighthouse, and a JS SDK with Multicall3 reads. **Not adding:** token launch, NFT
+marketplace or swaps — ArcName stays an identity layer.
+
+## Domain placeholders
+
+The live origin is not yet known, so the placeholder **`https://arc-domain.vercel.app`** is used in:
+
+- `index.html` — canonical, `og:url`, `og:image`, `twitter:url`, `twitter:image`, JSON-LD `@id`/`url`
+- `sitemap.xml` — single `<loc>` URL
+- `robots.txt` — commented-out `Sitemap:` line
+
+If you deploy under a different origin, replace **every** occurrence (the head of `index.html` is
+marked with an HTML comment). The `favicon.svg` is also a stand-in for a 1200×630 `og-image`;
+swap in a raster image and update `og:image` when you ship one.
 
 ## Disclaimer
 

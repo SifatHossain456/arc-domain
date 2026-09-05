@@ -1,0 +1,8 @@
+User-agent: *
+Allow: /
+
+# ArcName is a single-page static app — everything is crawlable, nothing to block.
+#
+# NOTE: host below is a placeholder (see README → "Domain placeholders").
+# Replace it with the real deployed domain, then uncomment:
+# Sitemap: https://arc-domain.vercel.app/sitemap.xml

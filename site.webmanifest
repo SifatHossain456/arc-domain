@@ -1,0 +1,22 @@
+{
+  "name": "ArcName — one name, anywhere on Arc",
+  "short_name": "ArcName",
+  "description": "Register, own and transfer human-readable names on the Arc Network testnet. Live telemetry, onchain ownership, USDC-native.",
+  "id": "/",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "background_color": "#04060d",
+  "theme_color": "#04060d",
+  "lang": "en",
+  "dir": "ltr",
+  "categories": ["blockchain", "utilities", "finance"],
+  "icons": [
+    {
+      "src": "favicon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any"
+    }
+  ]
+}
